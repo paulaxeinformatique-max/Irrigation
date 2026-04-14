@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BioPlan - Irrigation v1.1</title>
+    <script src="https://unpkg.com/konva@9/konva.min.js"></script>
+    <style>
+        body { margin: 0; padding: 0; display: flex; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; height: 100vh; background: #ecf0f1; }
+        #sidebar { width: 220px; background: #2c3e50; color: white; padding: 15px; display: flex; flex-direction: column; gap: 10px; box-shadow: 2px 0 5px rgba(0,0,0,0.2); z-index: 10; }
+        #canvas-container { flex-grow: 1; background-color: #ffffff; background-image: radial-gradient(#d1d1d1 1px, transparent 1px); background-size: 20px 20px; }
+        .tool { background: #34495e; padding: 12px; cursor: pointer; border-radius: 6px; text-align: center; border: 1px solid #455a64; transition: 0.2s; font-size: 13px; }
+        .tool:hover { background: #1abc9c; transform: translateX(5px); }
+        .tool-pipe { background: #2980b9; border-color: #1c5980; }
+        .tool-danger { background: #e74c3c; margin-top: auto; }
+        h3 { font-size: 16px; border-bottom: 1px solid #7f8c8d; padding-bottom: 10px; color: #1abc9c; }
+    </style>
+</head>
+<body>
+
+    <div id="sidebar">
+        <h3>MATÉRIEL (Images)</h3>
+        <div class="tool" onclick="addItem('collier.png')">➕ Collier 1"</div>
+        <div class="tool" onclick="addItem('vannette.png')">➕ Vannette D16</div>
+        <div class="tool" onclick="addItem('bouchon.png')">➕ Bouchon D25</div>
+        <div class="tool" onclick="addItem('fin_rampe.png')">➕ Fin Rampe D16</div>
+        
+        <h3>RÉSEAU (Tuyaux)</h3>
+        <div class="tool tool-pipe" onclick="addPipe('#2c3e50', 8, false)">📏 Tuyau D25 (Principal)</div>
+        <div class="tool tool-pipe" onclick="addPipe('#3498db', 4, true)">📏 Tuyau D16 (GAG)</div>
+
+        <div class="tool tool-danger" onclick="layer.destroyChildren(); layer.draw();">🗑️ Tout effacer</div>
+    </div>
+
+    <div id="canvas-container"></div>
+
+    <script>
+        var stage = new Konva.Stage({
+            container: 'canvas-container',
+            width: window.innerWidth - 220,
+            height: window.innerHeight,
+        });
+
+        var layer = new Konva.Layer();
+        stage.add(layer);
+
+        // FONCTION POUR LES IMAGES
+        function addItem(src) {
+            Konva.Image.fromURL(src, function (img) {
+                img.setAttrs({
+                    x: 50 + Math.random() * 50,
+                    y: 50 + Math.random() * 50,
+                    draggable: true,
+                    width: 60,
+                    height: 60,
+                });
+                layer.add(img);
+                layer.batchDraw();
+            });
+        }
+
+        // FONCTION POUR LES TUYAUX (Lignes)
+        function addPipe(color, thickness, isDash) {
+            var line = new Konva.Line({
+                points: [100, 100, 300, 100], // Une ligne de 200px par défaut
+                stroke: color,
+                strokeWidth: thickness,
+                lineCap: 'round',
+                lineJoin: 'round',
+                draggable: true,
+                dash: isDash ? [10, 5] : [], // Pointillés si c'est du GAG
+            });
+
+            // On ajoute des petits cercles aux extrémités pour pouvoir l'étirer plus tard ? 
+            // Pour l'instant on la rend juste déplaçable.
+            layer.add(line);
+            layer.batchDraw();
+        }
+
+        // Redimensionner si on change la taille de la fenêtre
+        window.addEventListener('resize', () => {
+            stage.width(window.innerWidth - 220);
+            stage.height(window.innerHeight);
+        });
+    </script>
+</body>
+</html>
