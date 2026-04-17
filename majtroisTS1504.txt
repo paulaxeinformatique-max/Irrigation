@@ -1,0 +1,147 @@
+//+------------------------------------------------------------------+
+//|                                              Troists_Sync_EA.mq5 |
+//|                                  Version Finale avec Sync Manuelle|
+//+------------------------------------------------------------------+
+#property copyright "Toi & Ton Père"
+#property version   "2.00"
+#include <Trade\Trade.mqh>
+
+CTrade trade;
+
+//--- 1. PARAMÈTRES GÉNÉRAUX ---
+input double InpLotSize          = 0.10;    // Taille du lot
+input int    InpStopLoss         = 55000;   // Stop Loss (en points)
+input int    InpATRPeriod        = 14;      // Période de l'ATR pour les SuperTrends
+
+//--- 2. PARAMÈTRES DES SUPERTRENDS ---
+input double InpTSLongMult       = 15.86;   // Multiplicateur TSLONG
+input double InpTSCourtMult      = 2.10;    // Multiplicateur TSCOURT
+input double InpTSTrendMult      = 1.00;    // Multiplicateur TSTREND
+
+//--- 3. SYNCHRONISATION MANUELLE (Tes valeurs NinjaTrader) ---
+input double InpManualTSLong     = 48770.44; // Valeur de départ TSLONG
+input double InpManualTSCourt    = 44997.00; // Valeur de départ TSCOURT
+input double InpManualTSTrend    = 45116.00; // Valeur de départ TSTREND
+
+//--- 4. PARAMÈTRES DU TESTINDICATOR ---
+input int    InpTestIndHigh      = 3;       // Période pour le Plus Haut
+input int    InpTestIndLow       = 3;       // Période pour le Plus Bas
+
+//--- VARIABLES GLOBALES ---
+datetime lastBarTime;
+bool     initialSyncDone = false;
+
+// Structure pour stocker les états des 3 SuperTrends
+struct ST_State {
+    double value;
+    bool   isUpTrend;
+};
+
+ST_State stLong, stCourt, stTrend;
+
+//+------------------------------------------------------------------+
+//| FONCTION HEIKEN ASHI (Corrigée : Du passé vers le présent)       |
+//+------------------------------------------------------------------+
+void UpdateHeikenAshi(int count, double &haOpen[], double &haHigh[], double &haLow[], double &haClose[]) {
+    MqlRates rates[];
+    ArraySetAsSeries(rates, true);
+    if(CopyRates(_Symbol, _Period, 0, count, rates) <= 0) return;
+
+    ArrayResize(haOpen, count); ArrayResize(haHigh, count);
+    ArrayResize(haLow, count);  ArrayResize(haClose, count);
+
+    haOpen[count-1]  = (rates[count-1].open + rates[count-1].close) / 2.0;
+    haClose[count-1] = (rates[count-1].open + rates[count-1].high + rates[count-1].low + rates[count-1].close) / 4.0;
+    haHigh[count-1]  = rates[count-1].high;
+    haLow[count-1]   = rates[count-1].low;
+
+    for(int i = count - 2; i >= 0; i--) {
+        haClose[i] = (rates[i].open + rates[i].high + rates[i].low + rates[i].close) / 4.0;
+        haOpen[i]  = (haOpen[i+1] + haClose[i+1]) / 2.0;
+        haHigh[i]  = MathMax(rates[i].high, MathMax(haOpen[i], haClose[i]));
+        haLow[i]   = MathMin(rates[i].low, MathMin(haOpen[i], haClose[i]));
+    }
+}
+
+//+------------------------------------------------------------------+
+//| CALCUL DU SUPERTREND (Logique récursive)                         |
+//+------------------------------------------------------------------+
+ST_State CalculateST(double multiplier, double price, double atr, ST_State &prevState) {
+    ST_State current;
+    double upperBand = price + (multiplier * atr);
+    double lowerBand = price - (multiplier * atr);
+
+    if(price > prevState.value && prevState.isUpTrend) {
+        current.value = MathMax(lowerBand, prevState.value);
+        current.isUpTrend = true;
+    }
+    else if(price < prevState.value && !prevState.isUpTrend) {
+        current.value = MathMin(upperBand, prevState.value);
+        current.isUpTrend = false;
+    }
+    else {
+        current.isUpTrend = (price > prevState.value);
+        current.value = current.isUpTrend ? lowerBand : upperBand;
+    }
+    return current;
+}
+
+//+------------------------------------------------------------------+
+//| EXECUTION À CHAQUE NOUVELLE BOUGIE                               |
+//+------------------------------------------------------------------+
+void OnTick() {
+    datetime currentBarTime = iTime(_Symbol, _Period, 0);
+    if(currentBarTime == lastBarTime) return;
+    lastBarTime = currentBarTime;
+
+    // 1. Mise à jour des données HA
+    double haOpen[], haHigh[], haLow[], haClose[];
+    UpdateHeikenAshi(100, haOpen, haHigh, haLow, haClose);
+
+    // 2. Calcul du TestIndicator (Point d'équilibre)
+    int hIdx = ArrayMaximum(haHigh, 1, InpTestIndHigh);
+    int lIdx = ArrayMinimum(haLow, 1, InpTestIndLow);
+    double testIndicator = (haHigh[hIdx] + haLow[lIdx]) / 2.0;
+
+    // 3. SYNCHRONISATION OU CALCUL DES SUPERTRENDS
+    if(!initialSyncDone) {
+        stLong.value  = InpManualTSLong;  stLong.isUpTrend  = (testIndicator > InpManualTSLong);
+        stCourt.value = InpManualTSCourt; stCourt.isUpTrend = (testIndicator > InpManualTSCourt);
+        stTrend.value = InpManualTSTrend; stTrend.isUpTrend = (testIndicator > InpManualTSTrend);
+        initialSyncDone = true;
+        Print("--- SYNCHRONISATION MANUELLE EFFECTUÉE ---");
+    } else {
+        double atr = iATR(_Symbol, _Period, InpATRPeriod, 1); // ATR de la bougie précédente
+        stLong  = CalculateST(InpTSLongMult,  testIndicator, atr, stLong);
+        stCourt = CalculateST(InpTSCourtMult, testIndicator, atr, stCourt);
+        stTrend = CalculateST(InpTSTrendMult, testIndicator, atr, stTrend);
+    }
+
+    // 4. ANALYSE DES TENDANCES
+    bool UP   = (testIndicator > stLong.value && testIndicator > stCourt.value);
+    bool DOWN = (testIndicator < stLong.value && testIndicator < stCourt.value);
+    string fond = (testIndicator > stLong.value) ? "HAUSSIERE" : "BAISSIERE";
+
+    PrintFormat("Heure: %s | TestInd: %.2f | Fond: %s | TSLong: %.2f | UP: %s | DOWN: %s", 
+                TimeToString(currentBarTime), testIndicator, fond, stLong.value, UP?"OUI":"NON", DOWN?"OUI":"NON");
+
+    // 5. GESTION DES POSITIONS
+    bool hasPosition = PositionSelect(_Symbol);
+    bool isDoubleGreen = (haClose[1] > haOpen[1] && haClose[2] > haOpen[2]);
+    bool isDoubleRed   = (haClose[1] < haOpen[1] && haClose[2] < haOpen[2]);
+
+    if(!hasPosition) {
+        if(UP && testIndicator > stTrend.value && isDoubleGreen) {
+            double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+            trade.Buy(InpLotSize, _Symbol, ask, ask - (InpStopLoss * _Point), 0, "Achat Sync");
+        }
+        else if(DOWN && testIndicator < stTrend.value && isDoubleRed) {
+            double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+            trade.Sell(InpLotSize, _Symbol, bid, bid + (InpStopLoss * _Point), 0, "Vente Sync");
+        }
+    } else {
+        long type = PositionGetInteger(POSITION_TYPE);
+        if(type == POSITION_TYPE_BUY && !stTrend.isUpTrend) trade.PositionClose(_Symbol);
+        if(type == POSITION_TYPE_SELL && stTrend.isUpTrend) trade.PositionClose(_Symbol);
+    }
+}
